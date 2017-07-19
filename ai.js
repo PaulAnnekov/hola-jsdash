@@ -1,5 +1,15 @@
 'use strict'; /*jslint node:true*/
 
+
+function dir2char(d){
+  switch (d){
+    case UP: return 'u';
+    case DOWN: return 'd';
+    case RIGHT: return 'r';
+    case LEFT: return 'l';
+  }
+}
+
 class Point {
   constructor(x, y){
     this.x = x;
@@ -27,12 +37,12 @@ class Point {
 
   dir(to){
     let dirs = {};
-    dirs[this.up()] = 'u';
-    dirs[this.right()] = 'r';
-    dirs[this.down()] = 'd';
-    dirs[this.left()] = 'l';
-    if (!dirs[to])
-      throw new Error(`No direction from ${this} to ${to}`);
+    dirs[this.up()] = UP;
+    dirs[this.right()] = RIGHT;
+    dirs[this.down()] = DOWN;
+    dirs[this.left()] = LEFT;
+    if (dirs[to]===undefined)
+      throw new Error(`No direction from ${this} to ${to} (${JSON.stringify(dirs)})`);
     return dirs[to];
   }
 
@@ -92,80 +102,80 @@ class AStar {
  * Returns path list from [from] to any point from [to].
  */
   path(from, to/*, [List<Point> obsticles]*/) {
-  /*if (obsticles == null)
-    obsticles = [];*/
-  //var map = gameState.mapAtStep(0);
-  // game does not support diagonal moves
-  let neighborX = [1, 0, -1, 0];
-  let neighborY = [0, 1, 0, -1];
-  let current;
-  let gScore = {};
-  gScore[from] = 0;
-  let fScore = {};
-  fScore[from] = this._distance(from, to);
-  //Map<Point, Map> bombWait = {};
-  let closedSet = new List();
-  let openSet = new List([from]);
-  openSet.add(from);
-  let cameFrom = {};
-  while (!openSet.isEmpty()) {
-    current = openSet.reduce((first, second) => fScore[first] < fScore[second] ? first : second);
-    if (to.contains(current))
-      return this._getPath(cameFrom, /*bombWait, */current);
-    openSet.remove(current);
-    closedSet.add(current);
-    for (let i = 0; i < 4; i++) {
-      let x = current.x + neighborX[i];
-      let y = current.y + neighborY[i];
-      let neighbor = new Point(x, y);
-      if (this.world.isOutOfMap(x, y))
-        continue;
-      if (closedSet.contains(neighbor))
-        continue;
-      /*if (obsticles.contains(neighbor))
-        continue;*/
-      /* Game-specific logic start*/
-      let cameFromTmp = Object.assign({}, cameFrom);
-      cameFromTmp[neighbor] = current;
-      /*var bombWaitTmp = new Map.from(bombWait);
-      bombWaitTmp.remove(neighbor);*/
-      let path = this._getPath(cameFromTmp/*, bombWaitTmp*/, neighbor);
-      //let step = path.length-1;
-      //map = gameState.mapAtStep(step);
-      //var waitPoint, waitTime = 0;
-      if (!to.contains(neighbor) && this.world.isObstacle(neighbor)/*gameState.isObstacle(neighbor, step)*/) {
-        continue;
-        /*if (!gameState.isBomb(neighbor, step))
-          continue;*/
-        /*path.any((point) {
-          if (!_cellsOnFire.contains(point)) {
-            waitPoint = point;
-            return true;
-          }
-          return false;
-        });*/
-        /*if (waitPoint == null)
+    /*if (obsticles == null)
+      obsticles = [];*/
+    //var map = gameState.mapAtStep(0);
+    // game does not support diagonal moves
+    let neighborX = [1, 0, -1, 0];
+    let neighborY = [0, 1, 0, -1];
+    let current;
+    let gScore = {};
+    gScore[from] = 0;
+    let fScore = {};
+    fScore[from] = this._distance(from, to);
+    //Map<Point, Map> bombWait = {};
+    let closedSet = new List();
+    let openSet = new List([from]);
+    openSet.add(from);
+    let cameFrom = {};
+    while (!openSet.isEmpty()) {
+      current = openSet.reduce((first, second) => fScore[first] < fScore[second] ? first : second);
+      if (to.contains(current))
+        return this._getPath(cameFrom, /*bombWait, */current);
+      openSet.remove(current);
+      closedSet.add(current);
+      for (let i = 0; i < 4; i++) {
+        let x = current.x + neighborX[i];
+        let y = current.y + neighborY[i];
+        let neighbor = new Point(x, y);
+        if (this.world.isOutOfMap(x, y))
           continue;
-        waitTime = gameState.getBombCountdown(neighbor);*/
+        if (closedSet.contains(neighbor))
+          continue;
+        /*if (obsticles.contains(neighbor))
+          continue;*/
+        /* Game-specific logic start*/
+        //let cameFromTmp = Object.assign({}, cameFrom);
+        //cameFromTmp[neighbor] = current;
+        /*var bombWaitTmp = new Map.from(bombWait);
+        bombWaitTmp.remove(neighbor);*/
+        //let path = this._getPath(cameFromTmp/*, bombWaitTmp*/, neighbor);
+        //let step = path.length-1;
+        //map = gameState.mapAtStep(step);
+        //var waitPoint, waitTime = 0;
+        if (/*!to.contains(neighbor) && */this.world.isObstacle(neighbor, current.dir(neighbor))/*gameState.isObstacle(neighbor, step)*/) {
+          continue;
+          /*if (!gameState.isBomb(neighbor, step))
+            continue;*/
+          /*path.any((point) {
+            if (!_cellsOnFire.contains(point)) {
+              waitPoint = point;
+              return true;
+            }
+            return false;
+          });*/
+          /*if (waitPoint == null)
+            continue;
+          waitTime = gameState.getBombCountdown(neighbor);*/
+        }
+        /*if (gameState.isDeadPos(neighbor, step+1))
+          continue;*/
+        /* Game-specific logic end*/
+        let tentativeGScore = gScore[current] + 1/* + waitTime*/;
+        if (openSet.contains(neighbor) && tentativeGScore >= gScore[neighbor])
+          continue;
+        /* Game-specific logic start*/
+        //bombWait[neighbor] = {'waitPoint': waitPoint, 'waitTime': waitTime};
+        /* Game-specific logic end*/
+        cameFrom[neighbor] = current;
+        gScore[neighbor] = tentativeGScore;
+        fScore[neighbor] = gScore[neighbor] + this._distance(neighbor, to);
+        if (!openSet.contains(neighbor))
+          openSet.add(neighbor);
       }
-      /*if (gameState.isDeadPos(neighbor, step+1))
-        continue;*/
-      /* Game-specific logic end*/
-      let tentativeGScore = gScore[current] + 1/* + waitTime*/;
-      if (openSet.contains(neighbor) && tentativeGScore >= gScore[neighbor])
-        continue;
-      /* Game-specific logic start*/
-      //bombWait[neighbor] = {'waitPoint': waitPoint, 'waitTime': waitTime};
-      /* Game-specific logic end*/
-      cameFrom[neighbor] = current;
-      gScore[neighbor] = tentativeGScore;
-      fScore[neighbor] = gScore[neighbor] + this._distance(neighbor, to);
-      if (!openSet.contains(neighbor))
-        openSet.add(neighbor);
     }
+    return null;
   }
-  return null;
-}
 
   _distance(from, to) {
     // TODO: optimize for single [to].
@@ -194,21 +204,52 @@ class AStar {
 
 class Game {
   *loop(screen) {
+    let max_time = 0;
+    screen.pop();
+    this.world = from_ascii(screen, {});
     while (true){
-      screen.pop();
-      this.world = from_ascii(screen, {});
-      let aStar = new AStar(this.world);
+      let gameState = new GameState(this.world);
+      // TODO: add world compare with "screen", quit and log if we fuckup and missed frames
+      let ts = Date.now();
+      let aStar = new AStar(gameState);
       let diamonds = this.world.getDiamonds();
       //console.warn('from ', this.world.playerPos);
-      if (this.world.playerPos.toString() == '23 10')
-        debugger;
+      // TODO: what if no diamonds?
+      debugger;
       let path = aStar.path(this.world.playerPos, diamonds);
       let move = 'wait';
       if (path)
         move = this.world.playerPos.dir(path[path.length-2]);
-      //console.warn('move ', move);
-      yield move;
+      console.warn('move ', move, path);
+      let time = Date.now() - ts;
+      max_time = Math.max(time, max_time);
+      console.warn('time', time, 'max', max_time);
+      this.world.control(move);
+      this.world.update();
+      yield dir2char(move);
     }
+  }
+}
+
+class GameState {
+  constructor(world) {
+    this.worldPerStep = [world];
+  }
+
+  _calcStep(step) {
+    if (this.worldPerStep[step])
+      return;
+    let prevWorld = this.worldPerStep[step-1];
+    let world = new World(prevWorld.width, prevWorld.height, {});
+    for (let [point, thing] of prevWorld)
+      thing.clone(world);
+  }
+
+  worldAtStep(step) {
+    for (let i = 1; i <= step; i++) {
+      this._calcStep(i);
+    }
+    return this.worldPerStep[step];
   }
 }
 
@@ -245,6 +286,11 @@ class Thing { // it would be a bad idea to name a class Object :-)
   hit(){} // hit by explosion or falling object
   walk_into(dir){ return false; } // can walk into?
   canWalkInto(){ return false; }
+  clone(world) {
+    let thing = new this.constructor(world);
+    Object.keys(this).filter(k=>!['world', 'mark'].includes(k)).forEach(k=>thing[k] = this[k]);
+    return thing;
+  }
 }
 
 class SteelWall extends Thing {
@@ -327,7 +373,10 @@ class Diamond extends LooseThing {
     this.world.diamond_collected();
     return true;
   }
-  canWalkInto(){ return true; }
+  canWalkInto(dir){
+    this.clone();
+    return !this.falling || dir!=UP;
+  }
 }
 
 class Explosion extends Thing {
@@ -480,9 +529,9 @@ class World {
   isOutOfMap(x, y) {
     return x < 0 || y < 0 || y >= this.height || x >= this.width;
   }
-  isObstacle(point) {
+  isObstacle(point, dir) {
     // this.get(point) == undefined == free cell
-    return this.get(point) && !this.get(point).canWalkInto();
+    return this.get(point) && !this.get(point).canWalkInto(dir);
   }
   getDiamonds() {
     let diamonds = new List();
