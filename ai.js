@@ -93,8 +93,8 @@ class List {
 class AStar {
   /*GameState gameState;
   List<Point> _cellsOnFire;*/
-  constructor(world/*this.gameState*/) {
-    this.world = world;
+  constructor(gameState) {
+    this.gameState = gameState;
     //_cellsOnFire = gameState.getCellsOnFire();
   }
 
@@ -118,6 +118,7 @@ class AStar {
     let openSet = new List([from]);
     openSet.add(from);
     let cameFrom = {};
+    let world = this.gameState.worldAtStep(0);
     while (!openSet.isEmpty()) {
       current = openSet.reduce((first, second) => fScore[first] < fScore[second] ? first : second);
       if (to.contains(current))
@@ -128,22 +129,19 @@ class AStar {
         let x = current.x + neighborX[i];
         let y = current.y + neighborY[i];
         let neighbor = new Point(x, y);
-        if (this.world.isOutOfMap(x, y))
+        if (world.isOutOfMap(x, y))
           continue;
         if (closedSet.contains(neighbor))
           continue;
         /*if (obsticles.contains(neighbor))
           continue;*/
         /* Game-specific logic start*/
-        //let cameFromTmp = Object.assign({}, cameFrom);
-        //cameFromTmp[neighbor] = current;
         /*var bombWaitTmp = new Map.from(bombWait);
         bombWaitTmp.remove(neighbor);*/
-        //let path = this._getPath(cameFromTmp/*, bombWaitTmp*/, neighbor);
-        //let step = path.length-1;
-        //map = gameState.mapAtStep(step);
+        /*let step = path.length-1;
+        let world = this.world.worldAtStep(step);*/
         //var waitPoint, waitTime = 0;
-        if (/*!to.contains(neighbor) && */this.world.isObstacle(neighbor, current.dir(neighbor))/*gameState.isObstacle(neighbor, step)*/) {
+        if (/*!to.contains(neighbor) && */world.isObstacle(neighbor, current.dir(neighbor))/*gameState.isObstacle(neighbor, step)*/) {
           continue;
           /*if (!gameState.isBomb(neighbor, step))
             continue;*/
@@ -157,6 +155,15 @@ class AStar {
           /*if (waitPoint == null)
             continue;
           waitTime = gameState.getBombCountdown(neighbor);*/
+        }
+        let cameFromTmp = Object.assign({}, cameFrom);
+        cameFromTmp[neighbor] = current;
+        let path = this._getPath(cameFromTmp/*, bombWaitTmp*/, neighbor);
+        // TODO: maybe we really need more steps?
+        if (path.length < 6)
+        {
+          if (this.gameState.isDeadPos(neighbor, path.length))
+            continue;
         }
         /*if (gameState.isDeadPos(neighbor, step+1))
           continue;*/
@@ -208,6 +215,11 @@ class Game {
     screen.pop();
     this.world = from_ascii(screen, {});
     while (true){
+      console.warn(screen);
+      screen.pop();
+      if (!this.world.isInSync(screen))
+        throw new Error('started to lose frames');
+      console.warn('pos', this.world.playerPos);
       let gameState = new GameState(this.world);
       // TODO: add world compare with "screen", quit and log if we fuckup and missed frames
       let ts = Date.now();
@@ -215,9 +227,9 @@ class Game {
       let diamonds = this.world.getDiamonds();
       //console.warn('from ', this.world.playerPos);
       // TODO: what if no diamonds?
-      debugger;
-      let path = aStar.path(this.world.playerPos, diamonds);
-      let move = 'wait';
+      let move, path;
+      if (!diamonds.isEmpty())
+        path = aStar.path(this.world.playerPos, diamonds);
       if (path)
         move = this.world.playerPos.dir(path[path.length-2]);
       console.warn('move ', move, path);
@@ -241,8 +253,12 @@ class GameState {
       return;
     let prevWorld = this.worldPerStep[step-1];
     let world = new World(prevWorld.width, prevWorld.height, {});
-    for (let [point, thing] of prevWorld)
-      thing.clone(world);
+    this.worldPerStep[step] = world;
+    for (let [point, thing] of prevWorld) {
+      if (thing && !(thing instanceof Player))
+        world.set(point, thing.clone(world));
+    }
+    world.update();
   }
 
   worldAtStep(step) {
@@ -250,6 +266,12 @@ class GameState {
       this._calcStep(i);
     }
     return this.worldPerStep[step];
+  }
+
+  isDeadPos(point, step) {
+    let killAtStep = this.worldAtStep(step).canKill(point);
+    let killBefore = this.worldAtStep(step-1).canKill(point);
+    return !killBefore && killAtStep;
   }
 }
 
@@ -286,6 +308,7 @@ class Thing { // it would be a bad idea to name a class Object :-)
   hit(){} // hit by explosion or falling object
   walk_into(dir){ return false; } // can walk into?
   canWalkInto(){ return false; }
+  canKill(){ return false; }
   clone(world) {
     let thing = new this.constructor(world);
     Object.keys(this).filter(k=>!['world', 'mark'].includes(k)).forEach(k=>thing[k] = this[k]);
@@ -348,6 +371,7 @@ class LooseThing extends Thing { // an object affected by gravity
   is_rounded(){ return !this.falling; }
   is_consumable(){ return true; }
   is_settled(){ return !this.falling; }
+  canKill(){ return true; }
 }
 
 class Boulder extends LooseThing {
@@ -373,9 +397,9 @@ class Diamond extends LooseThing {
     this.world.diamond_collected();
     return true;
   }
-  canWalkInto(dir){
-    this.clone();
-    return !this.falling || dir!=UP;
+  canWalkInto(/*dir*/){
+    return true;
+    /*return !this.falling || dir!=UP;*/
   }
 }
 
@@ -391,6 +415,7 @@ class Explosion extends Thing {
       this.world.set(this.point, new Diamond(this.world));
   }
   is_settled(){ return false; }
+  canKill(){ return true; }
 }
 
 class Butterfly extends Thing {
@@ -455,6 +480,7 @@ class Butterfly extends Thing {
     }
     this.world.butterfly_killed();
   }
+  canKill(){ return true; }
 }
 
 class Player extends Thing {
@@ -480,7 +506,7 @@ class Player extends Thing {
     this.control = undefined;
   }
   is_consumable(){ return true; }
-  hit(){ this.alive = false; }
+  hit(){ debugger; this.alive = false; }
 }
 
 class World {
@@ -531,7 +557,10 @@ class World {
   }
   isObstacle(point, dir) {
     // this.get(point) == undefined == free cell
-    return this.get(point) && !this.get(point).canWalkInto(dir);
+    return this.get(point) && !this.get(point).canWalkInto();
+  }
+  canKill(point) {
+    return this.get(point) && this.get(point).canKill();
   }
   getDiamonds() {
     let diamonds = new List();
@@ -609,8 +638,16 @@ class World {
       if (!thing.is_settled())
         this.settled = false;
     }
-    if (!this.frames_left)
-      this.player.alive = false;
+    /*if (!this.frames_left)
+      this.player.alive = false;*/
+  }
+  isInSync(screen) {
+    let cur = this.render();
+    for (let i in screen) {
+      if (screen[i] != cur[i])
+        return false;
+    }
+    return true;
   }
   control(c){ this.player.control = c; }
   is_playable(){ return this.player.alive; }
