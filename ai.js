@@ -161,7 +161,7 @@ class AStar {
         let path = this._getPath(cameFromTmp/*, bombWaitTmp*/, neighbor);
         //this.gameState.addPathToGraph(path.reverse());
         // TODO: maybe we really need more steps?
-        if (path.length < 4)
+        if (path.length < 5)
         {
           if (this.gameState.isDeadPos(path.reverse()))
             continue;
@@ -214,36 +214,46 @@ class Game {
   *loop(screen) {
     let max_time = 0, max_path = 0;
     screen.pop();
-    this.world = from_ascii(screen, {});
+    let world = from_ascii(screen, {});
+    let gameState = new GameState(world.playerPos(), world);
     while (true){
       //console.warn(screen);
       screen.pop();
-      if (!this.world.isInSync(screen))
-        throw new Error('started to lose frames');
-      //console.warn('pos', this.world.playerPos());
-      let gameState = new GameState(this.world.playerPos(), this.world);
-      // TODO: add world compare with "screen", quit and log if we fuckup and missed frames
+      world = gameState.getRootWorld();
+      if (!world.isInSync(screen))
+      {
+        console.warn(screen);
+        console.warn(world.render());
+        console.warn(`started to lose frames (${max_time} ms), quiting`);
+        yield 'q';
+        return;
+      }
+      //console.warn('pos', world.playerPos());
       let ts = Date.now();
       let aStar = new AStar(gameState);
-      let diamonds = this.world.getDiamonds();
-      //console.warn('from ', this.world.playerPos);
+      let diamonds = world.getDiamonds();
+      //console.warn('from ', world.playerPos);
       // TODO: what if no diamonds?
       let move, path;
       if (!diamonds.isEmpty())
-        path = aStar.path(this.world.playerPos(), diamonds);
+        path = aStar.path(world.playerPos(), diamonds);
       if (path)
       {
-        move = this.world.playerPos().dir(path[path.length-2]);
+        move = world.playerPos().dir(path[path.length-2]);
         max_path = Math.max(max_path, path.length);
       }
+      gameState.nextStep(path && path.reverse()[1]);
       //console.warn('pos graph', gameState.statesGraph);
       //console.warn('max path length', max_path);
       //console.warn('move ', move, path);
       let time = Date.now() - ts;
+      if (time > 100)
+        debugger;
       max_time = Math.max(time, max_time);
-      //console.warn('time', time, 'max', max_time);
-      this.world.control(move);
-      this.world.update();
+      console.warn('time', time, 'max', max_time);
+
+      /*world.control(move);
+      world.update();*/
       yield dir2char(move);
     }
   }
@@ -270,12 +280,27 @@ class GameState {
     return cur;
   }
 
+  nextStep(point) {
+    let root = this._getRoot();
+    this.statesGraph = {};
+    if (!point) {
+      this.statesGraph[root.world.playerPos()] = {world: root.world};
+      root.world.update();
+      return;
+    }
+    let next = root[point];
+    next.parent = null;
+    this.statesGraph[point] = next;
+  }
+
   _calcPath(path) {
     let graphPath = this.getGraphPath(path);
     if (graphPath.world)
       return graphPath.world;
     let prevWorld = graphPath.parent.world;
     let world = new World(prevWorld.width, prevWorld.height, {});
+    // copy only literal values
+    Object.keys(prevWorld).filter(k=>!['cells', 'player'].includes(k)).forEach(k=>world[k] = prevWorld[k]);
     graphPath.world = world;
     for (let [point, thing] of prevWorld) {
       if (thing)
@@ -293,6 +318,14 @@ class GameState {
       world = this._calcPath(cur);
     }
     return world;
+  }
+
+  _getRoot() {
+    return this.statesGraph[Object.keys(this.statesGraph)[0]];
+  }
+
+  getRootWorld() {
+    return this._getRoot().world;
   }
 
   isDeadPos(path) {
@@ -539,7 +572,7 @@ class Player extends Thing {
     this.control = undefined;
   }
   is_consumable(){ return true; }
-  hit(){ debugger; this.alive = false; }
+  hit(){ this.alive = false; }
 }
 
 class World {
@@ -679,8 +712,10 @@ class World {
   isInSync(screen) {
     let cur = this.render();
     for (let i in screen) {
-      if (screen[i] != cur[i])
+      if (screen[i] != cur[i]) {
+        console.warn('out of sync line', i);
         return false;
+      }
     }
     return true;
   }
