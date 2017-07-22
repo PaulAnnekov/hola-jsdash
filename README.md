@@ -14,3 +14,4 @@ TODO
 
 1. Make player move "0"s.
 2. Fix worker execution mode.
+3. Calc ways to 2 targets ahead to prevent to be killed when got 1st target (seed 82, 126).
