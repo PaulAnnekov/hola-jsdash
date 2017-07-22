@@ -118,7 +118,7 @@ class AStar {
     let openSet = new List([from]);
     openSet.add(from);
     let cameFrom = {};
-    let world = this.gameState.worldAtStep(0);
+    let world = this.gameState.worldAtPath([from]);
     while (!openSet.isEmpty()) {
       current = openSet.reduce((first, second) => fScore[first] < fScore[second] ? first : second);
       if (to.contains(current))
@@ -159,10 +159,11 @@ class AStar {
         let cameFromTmp = Object.assign({}, cameFrom);
         cameFromTmp[neighbor] = current;
         let path = this._getPath(cameFromTmp/*, bombWaitTmp*/, neighbor);
+        //this.gameState.addPathToGraph(path.reverse());
         // TODO: maybe we really need more steps?
-        if (path.length < 6)
+        if (path.length < 4)
         {
-          if (this.gameState.isDeadPos(neighbor, path.length))
+          if (this.gameState.isDeadPos(path.reverse()))
             continue;
         }
         /*if (gameState.isDeadPos(neighbor, step+1))
@@ -211,16 +212,16 @@ class AStar {
 
 class Game {
   *loop(screen) {
-    let max_time = 0;
+    let max_time = 0, max_path = 0;
     screen.pop();
     this.world = from_ascii(screen, {});
     while (true){
-      console.warn(screen);
+      //console.warn(screen);
       screen.pop();
       if (!this.world.isInSync(screen))
         throw new Error('started to lose frames');
-      console.warn('pos', this.world.playerPos);
-      let gameState = new GameState(this.world);
+      //console.warn('pos', this.world.playerPos());
+      let gameState = new GameState(this.world.playerPos(), this.world);
       // TODO: add world compare with "screen", quit and log if we fuckup and missed frames
       let ts = Date.now();
       let aStar = new AStar(gameState);
@@ -229,13 +230,18 @@ class Game {
       // TODO: what if no diamonds?
       let move, path;
       if (!diamonds.isEmpty())
-        path = aStar.path(this.world.playerPos, diamonds);
+        path = aStar.path(this.world.playerPos(), diamonds);
       if (path)
-        move = this.world.playerPos.dir(path[path.length-2]);
-      console.warn('move ', move, path);
+      {
+        move = this.world.playerPos().dir(path[path.length-2]);
+        max_path = Math.max(max_path, path.length);
+      }
+      //console.warn('pos graph', gameState.statesGraph);
+      //console.warn('max path length', max_path);
+      //console.warn('move ', move, path);
       let time = Date.now() - ts;
       max_time = Math.max(time, max_time);
-      console.warn('time', time, 'max', max_time);
+      //console.warn('time', time, 'max', max_time);
       this.world.control(move);
       this.world.update();
       yield dir2char(move);
@@ -244,34 +250,61 @@ class Game {
 }
 
 class GameState {
-  constructor(world) {
-    this.worldPerStep = [world];
+  constructor(point, world) {
+    //this.worldPerStep = [world];
+    this.statesGraph = {};
+    this.statesGraph[point] = {world: world};
   }
 
-  _calcStep(step) {
-    if (this.worldPerStep[step])
-      return;
-    let prevWorld = this.worldPerStep[step-1];
+  getGraphPath(path) {
+    let cur = this.statesGraph;
+    path.forEach(point=>{
+      if (cur[point])
+      {
+        cur = cur[point];
+        return;
+      }
+      cur[point] = {parent: cur};
+      cur = cur[point];
+    });
+    return cur;
+  }
+
+  _calcPath(path) {
+    let graphPath = this.getGraphPath(path);
+    if (graphPath.world)
+      return graphPath.world;
+    let prevWorld = graphPath.parent.world;
     let world = new World(prevWorld.width, prevWorld.height, {});
-    this.worldPerStep[step] = world;
+    graphPath.world = world;
     for (let [point, thing] of prevWorld) {
-      if (thing && !(thing instanceof Player))
+      if (thing)
         world.set(point, thing.clone(world));
     }
+    world.control(world.playerPos().dir(path[path.length-1]));
     world.update();
+    return world;
   }
 
-  worldAtStep(step) {
-    for (let i = 1; i <= step; i++) {
-      this._calcStep(i);
+  worldAtPath(path) {
+    let cur = [], world;
+    for (let i = 0; i < path.length; i++) {
+      cur.push(path[i]);
+      world = this._calcPath(cur);
     }
-    return this.worldPerStep[step];
+    return world;
   }
 
-  isDeadPos(point, step) {
-    let killAtStep = this.worldAtStep(step).canKill(point);
-    let killBefore = this.worldAtStep(step-1).canKill(point);
-    return !killBefore && killAtStep;
+  isDeadPos(path) {
+    let cur = [path[0]];
+    for (let i = 1; i < path.length; i++) {
+      cur.push(path[i]);
+      let world = this._calcPath(cur);
+      // check if we are alive and moved (=there were no obstacle)
+      if (!world.is_playable() || !world.playerPos().is(path[i]))
+        return true;
+    }
+    return false;
   }
 }
 
@@ -529,7 +562,6 @@ class World {
     this.cells = new Array(h);
     for (let y = 0; y<h; y++)
       this.cells[y] = new Array(w);
-    this.playerPos = null;
   }
   *[Symbol.iterator](){
     for (let y = 0; y<this.height; y++)
@@ -550,7 +582,10 @@ class World {
     if (thing)
       thing.place(point);
     if (thing instanceof Player)
-      this.playerPos = point;
+      this.player = thing;
+  }
+  playerPos() {
+    return this.player.point;
   }
   isOutOfMap(x, y) {
     return x < 0 || y < 0 || y >= this.height || x >= this.width;
