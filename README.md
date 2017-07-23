@@ -18,3 +18,4 @@ TODO
 2. Fix worker execution mode.
 3. Calc ways to 2 targets ahead to prevent to be killed when got 1st target (seed 82, 126).
 4. What to do with diamonds that are moving? They can kill us (seed 8).
+5. Optimize performance of all places which are using Iterators.

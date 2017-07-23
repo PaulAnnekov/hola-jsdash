@@ -70,15 +70,19 @@ class List {
     return this.arr.some(a => a.is(v));
   }
 
+  length(v) { return this.arr.length; }
+
   remove(v) {
     let i = this.arr.findIndex(a => a.is(v));
     if (i > -1) {
       this.arr.splice(i, 1);
     }
+    return this;
   }
 
   add(v) {
     this.arr.push(v);
+    return this;
   }
 
   isEmpty() {
@@ -87,6 +91,10 @@ class List {
 
   reduce() {
     return this.arr.reduce.apply(this.arr, arguments);
+  }
+
+  clone() {
+    return new List(this.arr.slice(0));
   }
 }
 
@@ -126,7 +134,8 @@ class AStar {
 /**
  * Returns path list from [from] to any point from [to].
  */
-  path(from, to) {
+  path(from, to, startPath, steps) {
+    startPath = startPath||[];
     let neighborX = [1, 0, -1, 0];
     let neighborY = [0, 1, 0, -1];
     let current;
@@ -136,9 +145,8 @@ class AStar {
     fScore[from] = this._distance(from, to);
     let closedSet = new List();
     let openSet = new List([from]);
-    openSet.add(from);
     let cameFrom = {};
-    let world = this.gameState.worldAtPath([from]);
+    let world = this.gameState.getRootWorld();
     measure.start('while');
     while (!openSet.isEmpty()) {
       measure.start('openSet.reduce');
@@ -181,13 +189,15 @@ class AStar {
         if (path.length < 4)
         {
           measure.start('isDeadPos');
-          if (this.gameState.isDeadPos(path.reverse()))
+          if (this.gameState.isDeadPos(path.concat(startPath.slice(1)).reverse()))
           {
             measure.pause('isDeadPos');
             continue;
           }
           measure.pause('isDeadPos');
         }
+        if (steps >= path.length)
+          return path;
         /* Game-specific logic end*/
         measure.start('for end');
         let tentativeGScore = gScore[current] + 1/* + waitTime*/;
@@ -196,6 +206,16 @@ class AStar {
           measure.pause('for end');
           continue;
         }
+        /* Game-specific logic start*/
+        measure.start('next way check');
+        if (!startPath.length && to.contains(neighbor) && to.length() > 1 &&
+          !this.path(neighbor, to.clone().remove(neighbor), path))
+        {
+          measure.pause('next way check');
+          continue;
+        }
+        measure.pause('next way check');
+        /* Game-specific logic end*/
         cameFrom[neighbor] = current;
         gScore[neighbor] = tentativeGScore;
         fScore[neighbor] = gScore[neighbor] + this._distance(neighbor, to);
@@ -251,7 +271,7 @@ class Game {
         yield 'q';
         return;
       }
-      //console.warn('pos', world.playerPos());
+      console.warn('pos', world.playerPos());
       let ts = Date.now();
       let aStar = new AStar(gameState);
       let diamonds = world.getDiamonds();
@@ -269,9 +289,8 @@ class Game {
         max_path = Math.max(max_path, path.length);
       }
       gameState.nextStep(path && path.reverse()[1]);
-      //console.warn('pos graph', gameState.statesGraph);
       //console.warn('max path length', max_path);
-      //console.warn('move ', move, path);
+      console.warn('move', dir2char(move), path);
       let time = Date.now() - ts;
       measure.cycle();
       max_time = Math.max(time, max_time);
@@ -408,7 +427,7 @@ class Thing { // it would be a bad idea to name a class Object :-)
   is_settled(){ return true; } // no need to postpone game-over?
   hit(){} // hit by explosion or falling object
   walk_into(dir){ return false; } // can walk into?
-  canWalkInto(){ return false; }
+  isMovable(){ return false; }
   canKill(){ return false; }
   clone(world) {
     measure.start('clone');
@@ -436,7 +455,7 @@ class Dirt extends Thing {
   get_color(){ return '37'; } // white on black
   is_consumable(){ return true; }
   walk_into(dir){ return true; }
-  canWalkInto(){ return true; }
+  isMovable(){ return true; }
 }
 
 class LooseThing extends Thing { // an object affected by gravity
@@ -500,10 +519,7 @@ class Diamond extends LooseThing {
     this.world.diamond_collected();
     return true;
   }
-  canWalkInto(/*dir*/){
-    return true;
-    /*return !this.falling || dir!=UP;*/
-  }
+  isMovable(){ return true; }
 }
 
 class Explosion extends Thing {
@@ -584,6 +600,7 @@ class Butterfly extends Thing {
     this.world.butterfly_killed();
   }
   canKill(){ return true; }
+  isMovable(){ return true; }
 }
 
 class Player extends Thing {
@@ -610,6 +627,7 @@ class Player extends Thing {
   }
   is_consumable(){ return true; }
   hit(){ this.alive = false; }
+  isMovable(){ return true; }
 }
 
 class World {
@@ -662,7 +680,7 @@ class World {
   }
   isObstacle(point) {
     // this.get(point) == undefined == free cell
-    return this.get(point) && !this.get(point).canWalkInto();
+    return this.get(point) && !this.get(point).isMovable();
   }
   canKill(point) {
     return this.get(point) && this.get(point).canKill();
