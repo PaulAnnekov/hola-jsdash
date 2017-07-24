@@ -82,11 +82,9 @@ class List {
   }
 
   add(v) {
-    measure.start('list add');
     if (!Array.isArray(v))
       v = [v];
     this.arr = this.arr.concat(v);
-    measure.pause('list add');
     return this;
   }
 
@@ -123,13 +121,11 @@ class Measure {
     Object.keys(this.measures).forEach(l=>{
       if (this.measures[l].total > this.max[l] || !this.max[l])
         this.max[l] = this.measures[l].total;
-      console.warn(`${l}: ${this.measures[l].total} ms, max ${this.max[l]}`)
     });
     this.measures = {};
   }
 }
 
-let measure;
 
 class AStar {
   constructor(gameState) {
@@ -153,30 +149,18 @@ class AStar {
     let openSet = new List([from]);
     let cameFrom = {};
     let world = this.gameState.getRootWorld();
-    measure.start('while');
     while (!openSet.isEmpty()) {
-      measure.start('openSet.reduce');
       current = openSet.reduce((first, second) => fScore[first] < fScore[second] ? first : second);
-      measure.pause('openSet.reduce');
-      measure.start('to.contains(current)');
       if (to.contains(current))
       {
-        measure.pause('to.contains(current)');
-        measure.pause('while');
         return this._getPath(cameFrom, current);
       }
-      measure.pause('to.contains(current)');
-      measure.start('openSet.remove');
       openSet.remove(current);
       closedSet.add(current);
-      measure.pause('openSet.remove');
-      measure.start('for');
       for (let i = 0; i < 4; i++) {
-        measure.start('neighbor');
         let x = current.x + neighborX[i];
         let y = current.y + neighborY[i];
         let neighbor = new Point(x, y);
-        measure.pause('neighbor');
         if (world.isOutOfMap(x, y))
           continue;
         if (closedSet.contains(neighbor))
@@ -184,76 +168,59 @@ class AStar {
         /* Game-specific logic start*/
         if (world.isObstacle(neighbor))
           continue;
-        measure.start('cameFromTmp');
         // OPTIMIZATION: (~20ms in pick moments) Object.assign() is slow sometimes, maybe when manipulates a big map.
         // Use solution w/o clone.
         let prev = cameFrom[neighbor];
         cameFrom[neighbor] = current;
-        measure.pause('cameFromTmp');
         let path = this._getPath(cameFrom, neighbor);
         cameFrom[neighbor] = prev;
         if (this.gameState.getCounter() <= maxStatesPerControl)
         {
-          measure.start('isDeadPos');
           if (this.gameState.isDeadPos(path.concat(startPath.slice(1)).reverse()))
           {
-            measure.pause('isDeadPos');
             continue;
           }
-          measure.pause('isDeadPos');
         }
         /* Game-specific logic end*/
-        measure.start('for end');
         let tentativeGScore = gScore[current] + 1/* + waitTime*/;
         if (openSet.contains(neighbor) && tentativeGScore >= gScore[neighbor])
         {
-          measure.pause('for end');
           continue;
         }
         /* Game-specific logic start*/
-        measure.start('next way check');
         if (this.gameState.getCounter() <= maxStatesPerControl) {
           if (!startPath.length && to.contains(neighbor) && to.length() > 1 &&
             !this.path(neighbor, to.clone().remove(neighbor), path)) {
             this.blockedDiamonds.push(neighbor);
-            measure.pause('next way check');
             continue;
           }
         }
-        measure.pause('next way check');
         /* Game-specific logic end*/
         cameFrom[neighbor] = current;
         gScore[neighbor] = tentativeGScore;
         fScore[neighbor] = gScore[neighbor] + this._distance(neighbor, to);
         if (!openSet.contains(neighbor))
           openSet.add(neighbor);
-        measure.pause('for end');
       }
-      measure.pause('for');
     }
-    measure.pause('while');
     return null;
   }
 
   _distance(from, to) {
-    measure.start('_distance');
     // TODO: optimize for single [to].
     let val = to.reduce((min, point)=>{
       let distance = point.distanceTo(from);
       return min > distance ? distance : min;
     }, Number.MAX_VALUE);
-    measure.pause('_distance');
     return val;
   }
 
   _getPath(cameFrom, current) {
-    measure.start('_getPath');
     let totalPath = [current];
     while (cameFrom[current]) {
       current = cameFrom[current];
       totalPath.push(current);
     }
-    measure.pause('_getPath');
     return totalPath;
   }
 }
@@ -264,31 +231,23 @@ class Game {
     screen.pop();
     let world = from_ascii(screen, {});
     let gameState = new GameState(world.playerPos(), world);
-    measure = new Measure();
     while (true){
       gameState.resetCounter();
-      //console.warn(screen);
       screen.pop();
       world = gameState.getRootWorld();
       if (!world.isInSync(screen))
       {
-        console.warn(screen);
-        console.warn(world.render());
         console.warn(`started to lose frames (${max_time} ms), quiting`);
         yield 'q';
         return;
       }
-      console.warn('pos', world.playerPos());
       let ts = Date.now();
       let aStar = new AStar(gameState);
       let diamonds = gameState.getDiamonds();
-      //console.warn('from ', world.playerPos);
       let move, path;
       if (!diamonds.isEmpty()) {
-        measure.start('AStar');
         path = aStar.path(world.playerPos(), diamonds);
         gameState.blockedDiamonds.add(aStar.blockedDiamonds);
-        measure.pause('AStar');
       }
       if (path)
       {
@@ -296,13 +255,9 @@ class Game {
         max_path = Math.max(max_path, path.length);
       }
       gameState.nextStep(path && path.reverse()[1]);
-      //console.warn('max path length', max_path);
       let time = Date.now() - ts;
-      measure.cycle();
       max_time = Math.max(time, max_time);
       max_states = Math.max(gameState.getCounter(), max_states);
-      console.warn('time', time, 'max', max_time, 'max states', max_states);
-      console.warn('move', dir2char(move), path);
       yield dir2char(move);
     }
   }
@@ -359,8 +314,10 @@ class GameState {
   nextStep(point) {
     let root = this._getRoot();
     this.statesGraph = {};
-    if (!point) {
-      this.statesGraph[root.world.playerPos()] = {world: root.world};
+    if (!point || !root[point]) {
+      if (point)
+        root.world.control(root.world.playerPos().dir(point));
+      this.statesGraph[point||root.world.playerPos()] = {world: root.world};
       root.world.update();
       return;
     }
@@ -376,13 +333,11 @@ class GameState {
     if (graphPath.world)
       return graphPath.world;
     this.statesPerStep++;
-    measure.start('_calcPath');
     let prevWorld = graphPath.parent.world;
     let world = new World(prevWorld.width, prevWorld.height, {});
     // copy only literal values
     Object.keys(prevWorld).filter(k=>!['cells', 'player'].includes(k)).forEach(k=>world[k] = prevWorld[k]);
     graphPath.world = world;
-    measure.start('_calcPath clone');
     // OPTIMIZATION: (~15ms always) JS Iterators are slow, using plain for's instead.
     for (let y = 0; y<prevWorld.height; y++)
     {
@@ -391,16 +346,12 @@ class GameState {
       {
         if (row[x])
         {
-          measure.start('_calcPath set');
           world.set(row[x].point, row[x].clone(world));
-          measure.pause('_calcPath set');
         }
       }
     }
-    measure.pause('_calcPath clone');
     world.control(world.playerPos().dir(path[path.length-1]));
     world.update();
-    measure.pause('_calcPath');
     return world;
   }
 
@@ -471,10 +422,8 @@ class Thing { // it would be a bad idea to name a class Object :-)
   isMovable(){ return false; }
   canKill(){ return false; }
   clone(world) {
-    measure.start('clone');
     let thing = new this.constructor(world);
     Object.keys(this).filter(k=>!['world', 'mark'].includes(k)).forEach(k=>thing[k] = this[k]);
-    measure.pause('clone');
     return thing;
   }
 }
@@ -809,7 +758,6 @@ class World {
     let cur = this.render();
     for (let i in screen) {
       if (screen[i] != cur[i]) {
-        console.warn('out of sync line', i);
         return false;
       }
     }
