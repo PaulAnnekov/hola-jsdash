@@ -1,5 +1,6 @@
 'use strict'; /*jslint node:true*/
 
+let maxStatesPerControl = 10;
 
 function dir2char(d){
   switch (d){
@@ -81,7 +82,11 @@ class List {
   }
 
   add(v) {
-    this.arr.push(v);
+    measure.start('list add');
+    if (!Array.isArray(v))
+      v = [v];
+    this.arr = this.arr.concat(v);
+    measure.pause('list add');
     return this;
   }
 
@@ -129,12 +134,13 @@ let measure;
 class AStar {
   constructor(gameState) {
     this.gameState = gameState;
+    this.blockedDiamonds = [];
   }
 
-/**
- * Returns path list from [from] to any point from [to].
- */
-  path(from, to, startPath, steps) {
+  /**
+   * Returns path list from [from] to any point from [to].
+   */
+  path(from, to, startPath) {
     startPath = startPath||[];
     let neighborX = [1, 0, -1, 0];
     let neighborY = [0, 1, 0, -1];
@@ -186,7 +192,7 @@ class AStar {
         measure.pause('cameFromTmp');
         let path = this._getPath(cameFrom, neighbor);
         cameFrom[neighbor] = prev;
-        if (path.length < 4)
+        if (this.gameState.getCounter() <= maxStatesPerControl)
         {
           measure.start('isDeadPos');
           if (this.gameState.isDeadPos(path.concat(startPath.slice(1)).reverse()))
@@ -196,8 +202,6 @@ class AStar {
           }
           measure.pause('isDeadPos');
         }
-        if (steps >= path.length)
-          return path;
         /* Game-specific logic end*/
         measure.start('for end');
         let tentativeGScore = gScore[current] + 1/* + waitTime*/;
@@ -208,11 +212,13 @@ class AStar {
         }
         /* Game-specific logic start*/
         measure.start('next way check');
-        if (!startPath.length && to.contains(neighbor) && to.length() > 1 &&
-          !this.path(neighbor, to.clone().remove(neighbor), path))
-        {
-          measure.pause('next way check');
-          continue;
+        if (this.gameState.getCounter() <= maxStatesPerControl) {
+          if (!startPath.length && to.contains(neighbor) && to.length() > 1 &&
+            !this.path(neighbor, to.clone().remove(neighbor), path)) {
+            this.blockedDiamonds.push(neighbor);
+            measure.pause('next way check');
+            continue;
+          }
         }
         measure.pause('next way check');
         /* Game-specific logic end*/
@@ -225,7 +231,7 @@ class AStar {
       }
       measure.pause('for');
     }
-  measure.pause('while');
+    measure.pause('while');
     return null;
   }
 
@@ -254,12 +260,13 @@ class AStar {
 
 class Game {
   *loop(screen) {
-    let max_time = 0, max_path = 0;
+    let max_time = 0, max_path = 0, max_states = 0;
     screen.pop();
     let world = from_ascii(screen, {});
     let gameState = new GameState(world.playerPos(), world);
     measure = new Measure();
     while (true){
+      gameState.resetCounter();
       //console.warn(screen);
       screen.pop();
       world = gameState.getRootWorld();
@@ -274,13 +281,13 @@ class Game {
       console.warn('pos', world.playerPos());
       let ts = Date.now();
       let aStar = new AStar(gameState);
-      let diamonds = world.getDiamonds();
+      let diamonds = gameState.getDiamonds();
       //console.warn('from ', world.playerPos);
-      // TODO: what if no diamonds?
       let move, path;
       if (!diamonds.isEmpty()) {
         measure.start('AStar');
         path = aStar.path(world.playerPos(), diamonds);
+        gameState.blockedDiamonds.add(aStar.blockedDiamonds);
         measure.pause('AStar');
       }
       if (path)
@@ -290,11 +297,12 @@ class Game {
       }
       gameState.nextStep(path && path.reverse()[1]);
       //console.warn('max path length', max_path);
-      console.warn('move', dir2char(move), path);
       let time = Date.now() - ts;
       measure.cycle();
       max_time = Math.max(time, max_time);
-      console.warn('time', time, 'max', max_time);
+      max_states = Math.max(gameState.getCounter(), max_states);
+      console.warn('time', time, 'max', max_time, 'max states', max_states);
+      console.warn('move', dir2char(move), path);
       yield dir2char(move);
     }
   }
@@ -304,6 +312,21 @@ class GameState {
   constructor(point, world) {
     this.statesGraph = {};
     this.statesGraph[point] = {world: world};
+    this.statesPerStep = 0;
+    /**
+     * Example:
+     * AB
+     * :0
+     * :+0
+     *   +
+     * *0:
+     * 0+:
+     *
+     * We don't fit in the states ahead calc in B state and so can't fully calc retreat path from tunnel.
+     * But we fit in A state and know we will be killed by boulder.
+     * Blocking this diamond until next time will make us prevent infinite moves between A and B.
+     */
+    this.blockedDiamonds = new List();
   }
 
   getGraphPath(path) {
@@ -320,6 +343,19 @@ class GameState {
     return cur;
   }
 
+  resetCounter() {
+    this.statesPerStep = 0;
+  }
+
+  getCounter() {
+    return this.statesPerStep;
+  }
+
+  getDiamonds() {
+    let root = this._getRoot();
+    return root.world.getDiamonds(this.blockedDiamonds);
+  }
+
   nextStep(point) {
     let root = this._getRoot();
     this.statesGraph = {};
@@ -331,12 +367,15 @@ class GameState {
     let next = root[point];
     next.parent = null;
     this.statesGraph[point] = next;
+    if (root.world.diamonds_collected < next.world.diamonds_collected)
+      this.blockedDiamonds = new List();
   }
 
   _calcPath(path) {
     let graphPath = this.getGraphPath(path);
     if (graphPath.world)
       return graphPath.world;
+    this.statesPerStep++;
     measure.start('_calcPath');
     let prevWorld = graphPath.parent.world;
     let world = new World(prevWorld.width, prevWorld.height, {});
@@ -399,6 +438,8 @@ let game = new Game();
 exports.play = game.loop;
 
 
+
+/* !!! c-p from game code with patches !!! */
 
 
 
@@ -685,13 +726,13 @@ class World {
   canKill(point) {
     return this.get(point) && this.get(point).canKill();
   }
-  getDiamonds() {
+  getDiamonds(exclude) {
     let diamonds = new List();
     for (let y = 0; y<this.height; y++)
     {
       let row = this.cells[y];
       for (let x = 0; x<this.width; x++) {
-        if (row[x] instanceof Diamond)
+        if (row[x] instanceof Diamond && !exclude.contains(new Point(x, y)))
           diamonds.add(new Point(x, y));
       }
     }
