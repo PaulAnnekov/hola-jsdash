@@ -1,6 +1,9 @@
 'use strict'; /*jslint node:true*/
 
-let maxStatesPerControl = 10;
+const maxStatesRegular = 10;
+const maxStatesInit = 4;
+let maxStatesPerControl = maxStatesInit;
+let measure = new Measure();
 
 function dir2char(d){
   switch (d){
@@ -121,6 +124,7 @@ class Measure {
     Object.keys(this.measures).forEach(l=>{
       if (this.measures[l].total > this.max[l] || !this.max[l])
         this.max[l] = this.measures[l].total;
+      console.warn(`${l}: ${this.measures[l].total} ms, max ${this.max[l]}`)
     });
     this.measures = {};
   }
@@ -258,6 +262,7 @@ class Game {
       let time = Date.now() - ts;
       max_time = Math.max(time, max_time);
       max_states = Math.max(gameState.getCounter(), max_states);
+      maxStatesPerControl = maxStatesRegular;
       yield dir2char(move);
     }
   }
@@ -641,14 +646,6 @@ class World {
     for (let y = 0; y<h; y++)
       this.cells[y] = new Array(w);
   }
-  *[Symbol.iterator](){
-    for (let y = 0; y<this.height; y++)
-    {
-      let row = this.cells[y];
-      for (let x = 0; x<this.width; x++)
-        yield [new Point(x, y), row[x]];
-    }
-  }
   get(point){ return this.cells[point.y][point.x]; }
   set(point, thing){
     let old = this.cells[point.y][point.x];
@@ -742,14 +739,20 @@ class World {
     if (this.scored_expiry)
       this.scored_expiry--;
     this.settled = !this.streak_message;
-    for (let [point, thing] of this)
+    // OPTIMIZATION: JS Iterators are slow, using plain for's instead.
+    for (let y = 0; y<this.height; y++)
     {
-      if (!thing)
-        continue;
-      if (thing.mark<this.frame)
-        thing.update();
-      if (!thing.is_settled())
-        this.settled = false;
+      let row = this.cells[y];
+      for (let x = 0; x<this.width; x++)
+      {
+        if (!row[x])
+          continue;
+        let thing = row[x];
+        if (thing.mark<this.frame)
+          thing.update();
+        if (!thing.is_settled())
+          this.settled = false;
+      }
     }
     /*if (!this.frames_left)
       this.player.alive = false;*/
