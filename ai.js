@@ -152,7 +152,7 @@ class AStar {
     let closedSet = new List();
     let openSet = new List([from]);
     let cameFrom = {};
-    let world = this.gameState.getRootWorld();
+    let rootWorld = this.gameState.getRootWorld();
     measure.start('while');
     while (!openSet.isEmpty()) {
       measure.start('openSet.reduce');
@@ -177,12 +177,12 @@ class AStar {
         let y = current.y + neighborY[i];
         let neighbor = new Point(x, y);
         measure.pause('neighbor');
-        if (world.isOutOfMap(x, y))
+        if (rootWorld.isOutOfMap(x, y))
           continue;
         if (closedSet.contains(neighbor))
           continue;
         /* Game-specific logic start*/
-        if (world.isObstacle(neighbor))
+        if (rootWorld.isStatic(neighbor))
           continue;
         let tentativeGScore = gScore[current] + 1;
         if (openSet.contains(neighbor) && tentativeGScore >= gScore[neighbor])
@@ -195,24 +195,25 @@ class AStar {
         measure.pause('cameFromTmp');
         let path = this._getPath(cameFrom, neighbor);
         cameFrom[neighbor] = prev;
+        let fullPath = path.concat(startPath.slice(1)).reverse();
         if (this.gameState.getCounter() <= maxStatesPerControl)
         {
           measure.start('isDeadPos');
-          if (this.gameState.isDeadPos(path.concat(startPath.slice(1)).reverse()))
+          if (this.gameState.isDeadPos(fullPath))
           {
             measure.pause('isDeadPos');
             continue;
           }
           measure.pause('isDeadPos');
         }
+        else if (this.gameState.getWorld(fullPath).isBoulder(neighbor))
+          continue;
         measure.start('next way check');
-        if (this.gameState.getCounter() <= maxStatesPerControl) {
-          if (!startPath.length && to.contains(neighbor) && to.length() > 1 &&
-            !this.path(neighbor, to.clone().remove(neighbor), path)) {
-            this.blockedDiamonds.push(neighbor);
-            measure.pause('next way check');
-            continue;
-          }
+        if (!startPath.length && to.contains(neighbor) && to.length() > 2 &&
+          !this.path(neighbor, to.clone().remove(neighbor), path)) {
+          this.blockedDiamonds.push(neighbor);
+          measure.pause('next way check');
+          continue;
         }
         measure.pause('next way check');
         /* Game-specific logic end*/
@@ -263,6 +264,7 @@ class Game {
       gameState.resetCounter();
       screen.pop();
       world = gameState.getRootWorld();
+      console.warn(`pos ${world.playerPos()}`);
       if (!world.isInSync(screen))
       {
         console.warn(screen);
@@ -308,6 +310,7 @@ class Game {
       max_states = Math.max(gameState.getCounter(), max_states);
       console.warn('time', time, 'max', max_time, gameState.getCounter(), 'max states', max_states);
       console.warn('move', dir2char(move), path);
+      console.warn('blockedDiamonds', gameState.blockedDiamonds.arr);
       yield dir2char(move);
     }
   }
@@ -415,13 +418,16 @@ class GameState {
     return world;
   }
 
-  worldAtPath(path) {
-    let cur = [], world;
+  getWorld(path) {
+    let cur = [], state;
     for (let i = 0; i < path.length; i++) {
       cur.push(path[i]);
-      world = this._calcPath(cur);
+      let newState = this.getGraphPath(cur);
+      if (!newState.world)
+        break;
+      state = newState;
     }
-    return world;
+    return state.world;
   }
 
   _getRoot() {
@@ -480,6 +486,7 @@ class Thing { // it would be a bad idea to name a class Object :-)
   hit(){} // hit by explosion or falling object
   walk_into(dir){ return false; } // can walk into?
   isMovable(){ return false; }
+  isStatic(){ return false; }
   canKill(){ return false; }
   clone(world) {
     measure.start('clone');
@@ -493,6 +500,7 @@ class Thing { // it would be a bad idea to name a class Object :-)
 class SteelWall extends Thing {
   get_char(){ return '#'; }
   get_color(){ return '37;46'; } // white on cyan
+  isStatic(){ return true; }
 }
 
 class BrickWall extends Thing {
@@ -500,6 +508,7 @@ class BrickWall extends Thing {
   get_color(){ return '30;41'; } // black on red
   is_rounded(){ return true; }
   is_consumable(){ return true; }
+  isStatic(){ return true; }
 }
 
 class Dirt extends Thing {
@@ -562,6 +571,7 @@ class Boulder extends LooseThing {
     }
     return false;
   }
+  isMovable(){ return true; }
 }
 
 class Diamond extends LooseThing {
@@ -727,9 +737,13 @@ class World {
   isOutOfMap(x, y) {
     return x < 0 || y < 0 || y >= this.height || x >= this.width;
   }
-  isObstacle(point) {
+  isStatic(point) {
     // this.get(point) == undefined == free cell
-    return this.get(point) && !this.get(point).isMovable();
+    return this.get(point) && this.get(point).isStatic();
+  }
+  isBoulder(point) {
+    // this.get(point) == undefined == free cell
+    return this.get(point) && this.get(point) instanceof Boulder;
   }
   canKill(point) {
     return this.get(point) && this.get(point).canKill();
