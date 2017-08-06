@@ -212,29 +212,27 @@ class AStar {
         let path = this._getPath(cameFrom, neighbor);
         cameFrom[neighbor] = prev;
         let fullPath = path.concat(startPath.slice(1)).reverse();
+        measure.start('isDeadPos');
         if (this.gameState.getCounter() <= maxStatesPerControl)
         {
-          measure.start('isDeadPos');
           let posType = this.gameState.posType(fullPath);
-          if (posType != FREE)
-          {
+          if (posType != FREE) {
             if (!startPath.length && posType == DEAD)
               this.deadPos.push(neighbor);
             measure.pause('isDeadPos');
             continue;
           }
-          measure.pause('isDeadPos');
         }
-        else if (this.gameState.getWorld(fullPath).isBoulder(neighbor))
+        else if (this.gameState.getWorld(fullPath).isBoulder(neighbor)) {
+          measure.pause('isDeadPos');
           continue;
-        measure.start('next way check');
+        }
+        measure.pause('isDeadPos');
         if (!startPath.length && to.contains(neighbor) && to.length() > 2 &&
           !this.path(neighbor, to.clone().remove(neighbor), null, path)) {
           this.blockedDiamonds.push(neighbor);
-          measure.pause('next way check');
           continue;
         }
-        measure.pause('next way check');
         /* Game-specific logic end*/
         cameFrom[neighbor] = current;
         gScore[neighbor] = tentativeGScore;
@@ -424,7 +422,7 @@ class GameState {
   nextStep(point) {
     let root = this._getRoot();
     this.statesGraph = {};
-    if (!point || !root[point]) {
+    if (!point || !root[point] || !root[point].world) {
       if (point)
         root.world.control(root.world.playerPos().dir(point));
       this.statesGraph[point||root.world.playerPos()] = {world: root.world};
@@ -549,8 +547,11 @@ class Thing { // it would be a bad idea to name a class Object :-)
   canKill(){ return false; }
   clone(world) {
     measure.start('clone');
+    measure.start('clone new');
     let thing = new this.constructor(world);
-    Object.keys(this).filter(k=>!['world', 'mark'].includes(k)).forEach(k=>thing[k] = this[k]);
+    measure.pause('clone new');
+    // OPTIMIZATION: (~15ms in pick moments) Twice faster than filter+includes+forEach.
+    ['point', 'alive', 'dir', 'stage', 'falling', 'control'].forEach(k=>thing[k] = this[k]);
     measure.pause('clone');
     return thing;
   }
@@ -616,13 +617,6 @@ class LooseThing extends Thing { // an object affected by gravity
   canKill(){ return true; }
 }
 
-/**
- * Начальный direction - вверх
- * Пытается всегда идти налево от текущего направления
- * Если слева препятствие - продолжает в том же направлении
- *
- * Если и в том же направлении препятствие - делает поворот направо
- */
 class Boulder extends LooseThing {
   get_char(){ return 'O'; }
   get_color(){ return '1;34'; } // bright blue on black
@@ -665,6 +659,13 @@ class Explosion extends Thing {
   canKill(){ return true; }
 }
 
+/**
+ * Начальный direction - вверх
+ * Пытается всегда идти налево от текущего направления
+ * Если слева препятствие - продолжает в том же направлении
+ *
+ * Если и в том же направлении препятствие - делает поворот направо
+ */
 class Butterfly extends Thing {
   constructor(world){
     super(world);
@@ -820,7 +821,7 @@ class World {
     {
       let row = this.cells[y];
       for (let x = 0; x<this.width; x++) {
-        if (row[x] instanceof Diamond && !exclude.contains(new Point(x, y)))
+        if (row[x] instanceof Diamond && !exclude.contains(new Point(x, y))/* && !row[x].falling*/)
           diamonds.add(new Point(x, y));
       }
     }
