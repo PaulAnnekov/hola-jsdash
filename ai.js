@@ -39,6 +39,12 @@ class Point {
     }
   }
 
+  static fromString(str) {
+    let x = +str.split(' ')[0];
+    let y = +str.split(' ')[1];
+    return new Point(x, y);
+  }
+
   dir(to){
     let dirs = {};
     dirs[this.up()] = UP;
@@ -124,7 +130,7 @@ class Measure {
     Object.keys(this.measures).forEach(l=>{
       if (this.measures[l].total > this.max[l] || !this.max[l])
         this.max[l] = this.measures[l].total;
-      console.warn(`${l}: ${this.measures[l].total} ms, max ${this.max[l]}`)
+      //console.warn(`${l}: ${this.measures[l].total} ms, max ${this.max[l]}`)
     });
     this.measures = {};
   }
@@ -135,12 +141,14 @@ class AStar {
   constructor(gameState) {
     this.gameState = gameState;
     this.blockedDiamonds = [];
+    this.deadPos = [];
   }
 
   /**
    * Returns path list from [from] to any point from [to].
    */
-  path(from, to, startPath) {
+  path(from, to, block, startPath) {
+    block = block || new List();
     startPath = startPath||[];
     let neighborX = [1, 0, -1, 0];
     let neighborY = [0, 1, 0, -1];
@@ -156,7 +164,7 @@ class AStar {
     measure.start('while');
     while (!openSet.isEmpty()) {
       measure.start('openSet.reduce');
-      current = openSet.reduce((first, second) => fScore[first] < fScore[second] ? first : second);
+      current = openSet.reduce((first, second) => fScore[first] </*=*/ fScore[second] ? first : second);
       measure.pause('openSet.reduce');
       measure.start('to.contains(current)');
       if (to.contains(current))
@@ -182,6 +190,8 @@ class AStar {
         if (closedSet.contains(neighbor))
           continue;
         /* Game-specific logic start*/
+        if (block.contains(neighbor))
+          continue;
         if (rootWorld.isStatic(neighbor))
           continue;
         let tentativeGScore = gScore[current] + 1;
@@ -199,8 +209,11 @@ class AStar {
         if (this.gameState.getCounter() <= maxStatesPerControl)
         {
           measure.start('isDeadPos');
-          if (this.gameState.isDeadPos(fullPath))
+          let posType = this.gameState.posType(fullPath);
+          if (posType != FREE)
           {
+            if (!startPath.length && posType == DEAD)
+              this.deadPos.push(neighbor);
             measure.pause('isDeadPos');
             continue;
           }
@@ -210,7 +223,7 @@ class AStar {
           continue;
         measure.start('next way check');
         if (!startPath.length && to.contains(neighbor) && to.length() > 2 &&
-          !this.path(neighbor, to.clone().remove(neighbor), path)) {
+          !this.path(neighbor, to.clone().remove(neighbor), null, path)) {
           this.blockedDiamonds.push(neighbor);
           measure.pause('next way check');
           continue;
@@ -261,23 +274,24 @@ class Game {
     let gameState = new GameState(world.playerPos(), world);
     let prevWorld, move;
     while (true){
+      //console.warn('asdasd');
       gameState.resetCounter();
       screen.pop();
       world = gameState.getRootWorld();
-      console.warn(`pos ${world.playerPos()}`);
+      //console.warn(`pos ${world.playerPos()}`);
       if (!world.isInSync(screen))
       {
-        console.warn(screen);
-        console.warn(world.render());
-        console.warn(`started to lose frames (${max_time} ms)`);
+        //console.warn(screen);
+        //console.warn(world.render());
+        //console.warn(`started to lose frames (${max_time} ms)`);
         prevWorld.control();
         prevWorld.update();
         prevWorld.control(move);
         prevWorld.update();
         if (!prevWorld.isInSync(screen))
         {
-          console.warn(`lost >1 frames, quiting`);
-          console.warn(world.render());
+          //console.warn(`lost >1 frames, quiting`);
+          //console.warn(world.render());
           yield 'q';
           return;
         }
@@ -288,10 +302,14 @@ class Game {
       let aStar = new AStar(gameState);
       let diamonds = gameState.getDiamonds();
       let path;
+      let prevBlocked = gameState.deadPos.clone();
       if (!diamonds.isEmpty()) {
         measure.start('AStar');
-        path = aStar.path(world.playerPos(), diamonds);
+        path = aStar.path(world.playerPos(), diamonds, gameState.deadPos);
+        if (!path && !gameState.deadPos.isEmpty())
+          path = aStar.path(world.playerPos(), diamonds);
         gameState.blockedDiamonds.add(aStar.blockedDiamonds);
+        gameState.deadPos.add(aStar.deadPos);
         measure.pause('AStar');
       }
       if (path)
@@ -301,16 +319,20 @@ class Game {
       }
       else
         move = undefined;
+      //console.warn(screen);
+      //console.warn(world.render(gameState.getGraphPoints(), prevBlocked));
       prevWorld = gameState.getRootWorld();
       gameState.nextStep(path && path.reverse()[1]);
+      //console.warn(world.render(gameState.getGraphPoints()));
       maxStatesPerControl = maxStatesRegular;
       let time = Date.now() - ts;
       measure.cycle();
       max_time = Math.max(time, max_time);
       max_states = Math.max(gameState.getCounter(), max_states);
-      console.warn('time', time, 'max', max_time, gameState.getCounter(), 'max states', max_states);
-      console.warn('move', dir2char(move), path);
-      console.warn('blockedDiamonds', gameState.blockedDiamonds.arr);
+      //console.warn('time', time, 'max', max_time, gameState.getCounter(), 'max states', max_states);
+      //console.warn('move', dir2char(move), path);
+      //console.warn('blockedDiamonds', gameState.blockedDiamonds.arr);
+      //console.warn('blockedPos', gameState.deadPos.arr);
       yield dir2char(move);
     }
   }
@@ -335,6 +357,30 @@ class GameState {
      * Blocking this diamond until next time will make us prevent infinite moves between A and B.
      */
     this.blockedDiamonds = new List();
+    /**
+     * :::::  :+
+     *    O: ::+
+     * :  :+:::
+     * : A   ++
+     *    /   :O
+     *   +  +  :
+     *   :+O:
+     *   : O OO
+     * : :O+*+OO
+     *   :: O:+:
+     *
+     * Stores all points which were detected as DEAD during AStar.path call. Cleared when next diamond collected.
+     * This is a very crude method to get rid of looping when players moves back and forth.
+     */
+    this.deadPos = new List();
+  }
+
+  getGraphPoints(node) {
+    if (!node)
+      node = this.statesGraph;
+    let all = Object.keys(node).filter(n=>node[n] && node[n].world && n.includes(' ')).map(n=>Point.fromString(n));
+    all.forEach(n=>all = all.concat(this.getGraphPoints(node[n])));
+    return !arguments[0] ? new List(all) : all;
   }
 
   getGraphPath(path) {
@@ -365,6 +411,7 @@ class GameState {
   }
 
   setNewRoot(world) {
+    this.statesGraph = {};
     this.statesGraph[world.playerPos()] = {world: world};
   }
 
@@ -381,14 +428,17 @@ class GameState {
     let next = root[point];
     next.parent = null;
     this.statesGraph[point] = next;
-    if (root.world.diamonds_collected < next.world.diamonds_collected)
+    if (root.world.diamonds_collected < next.world.diamonds_collected) {
       this.blockedDiamonds = new List();
+      this.deadPos = new List();
+    }
   }
 
   _calcPath(path) {
     let graphPath = this.getGraphPath(path);
     if (graphPath.world)
       return graphPath.world;
+    ////console.warn('_calcPath', path);
     this.statesPerStep++;
     measure.start('_calcPath');
     let prevWorld = graphPath.parent.world;
@@ -438,22 +488,25 @@ class GameState {
     return this._getRoot().world;
   }
 
-  isDeadPos(path) {
+  posType(path) {
     let cur = [path[0]];
     for (let i = 1; i < path.length; i++) {
       cur.push(path[i]);
       let world = this._calcPath(cur);
       // check if we are alive and moved (=there were no obstacle)
-      if (!world.is_playable() || !world.playerPos().is(path[i]))
-        return true;
+      if (!world.is_playable())
+        return DEAD;
+      if (!world.playerPos().is(path[i]))
+        return BLOCKED;
     }
-    return false;
+    return FREE;
   }
 }
 
 let game = new Game();
 exports.play = game.loop;
 
+const DEAD = 0, BLOCKED = 1, FREE = 2;
 
 
 /* !!! c-p from game code with patches !!! */
@@ -792,13 +845,18 @@ class World {
     let res = n.toString();
     return res.length<len ? '0'.repeat(len-res.length)+res : res;
   }
-  render(){
+  render(marks, blocks){
+    let y = 0;
     let res = this.cells.map(row=>{
-      let res = '';
+      let res = '', x = 0;
       for (let cell of row)
       {
-        res += cell ? cell.get_char() : ' ';
+        let isMarked = marks && marks.contains(new Point(x, y)) && (!cell || !(cell instanceof Player));
+        let isBlocked = blocks && blocks.contains(new Point(x, y)) && (!cell || !(cell instanceof Player));
+        res += isMarked ? 'M' : isBlocked ? 'B' : cell ? cell.get_char() : ' ';
+        x++;
       }
+      y++;
       return res;
     });
     return res;
