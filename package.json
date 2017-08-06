@@ -1,0 +1,7 @@
+{
+  "name": "hola-jsdash",
+  "version": "0.0.1",
+  "dependencies": {
+    "markdown-table": "1.1.1"
+  }
+}
