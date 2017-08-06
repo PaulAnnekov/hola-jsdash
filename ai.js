@@ -4,6 +4,12 @@ const maxStatesRegular = 10;
 const maxStatesInit = 4;
 let maxStatesPerControl = maxStatesInit;
 let measure;
+const enableLog = false;
+
+function log() {
+  if (enableLog)
+    console.warn.apply(console, arguments);
+}
 
 function dir2char(d){
   switch (d){
@@ -130,7 +136,7 @@ class Measure {
     Object.keys(this.measures).forEach(l=>{
       if (this.measures[l].total > this.max[l] || !this.max[l])
         this.max[l] = this.measures[l].total;
-      //console.warn(`${l}: ${this.measures[l].total} ms, max ${this.max[l]}`)
+      log(`${l}: ${this.measures[l].total} ms, max ${this.max[l]}`)
     });
     this.measures = {};
   }
@@ -274,24 +280,24 @@ class Game {
     let gameState = new GameState(world.playerPos(), world);
     let prevWorld, move;
     while (true){
-      //console.warn('asdasd');
+      log('asdasd');
       gameState.resetCounter();
       screen.pop();
       world = gameState.getRootWorld();
-      //console.warn(`pos ${world.playerPos()}`);
+      log(`pos ${world.playerPos()}`);
       if (!world.isInSync(screen))
       {
-        //console.warn(screen);
-        //console.warn(world.render());
-        //console.warn(`started to lose frames (${max_time} ms)`);
+        log(screen);
+        log(world.render());
+        log(`started to lose frames (${max_time} ms)`);
         prevWorld.control();
         prevWorld.update();
         prevWorld.control(move);
         prevWorld.update();
         if (!prevWorld.isInSync(screen))
         {
-          //console.warn(`lost >1 frames, quiting`);
-          //console.warn(world.render());
+          log(`lost >1 frames, quiting`);
+          log(world.render());
           yield 'q';
           return;
         }
@@ -319,20 +325,20 @@ class Game {
       }
       else
         move = undefined;
-      //console.warn(screen);
-      //console.warn(world.render(gameState.getGraphPoints(), prevBlocked));
+      log(screen);
+      log(world.render(gameState.getGraphPoints(), prevBlocked));
       prevWorld = gameState.getRootWorld();
       gameState.nextStep(path && path.reverse()[1]);
-      //console.warn(world.render(gameState.getGraphPoints()));
+      log(world.render(gameState.getGraphPoints()));
       maxStatesPerControl = maxStatesRegular;
       let time = Date.now() - ts;
       measure.cycle();
       max_time = Math.max(time, max_time);
       max_states = Math.max(gameState.getCounter(), max_states);
-      //console.warn('time', time, 'max', max_time, gameState.getCounter(), 'max states', max_states);
-      //console.warn('move', dir2char(move), path);
-      //console.warn('blockedDiamonds', gameState.blockedDiamonds.arr);
-      //console.warn('blockedPos', gameState.deadPos.arr);
+      log('time', time, 'max', max_time, gameState.getCounter(), 'max states', max_states);
+      log('move', dir2char(move), path);
+      log('blockedDiamonds', gameState.blockedDiamonds.arr);
+      log('blockedPos', gameState.deadPos.arr);
       yield dir2char(move);
     }
   }
@@ -438,7 +444,7 @@ class GameState {
     let graphPath = this.getGraphPath(path);
     if (graphPath.world)
       return graphPath.world;
-    ////console.warn('_calcPath', path);
+    log('_calcPath', path);
     this.statesPerStep++;
     measure.start('_calcPath');
     let prevWorld = graphPath.parent.world;
