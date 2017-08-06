@@ -2,7 +2,7 @@
 let execSync = require('child_process').execSync;
 let fs = require('fs');
 let score = 0;
-let lines = []
+let lines = [];
 const pre1 = [2, 8, 20, 28, 50, 82, 126];
 const pre2 = [1066, 1145, 1222, 1301, 1378, 1456, 1531, 1607, 1682, 1758, 1835, 1910, 1986];
 const sids = pre1;
@@ -15,7 +15,7 @@ sids.forEach(s=>{
   console.log(`result for sid ${s}`);
   let obj = JSON.parse(fs.readFileSync(`log_${s}.json`, 'utf8'));
   score += obj.score;
-  let frames_left = obj.duration_frames - obj.ai_perf.processed;
+  let frames_left = obj.limit_frames - obj.ai_perf.processed;
   let res = obj.outcome == 'quit' ? `Q ${frames_left}` : frames_left != 0 ? `K ${frames_left}` : ' ';
   let line = `${obj.score}\t${obj.longest_streak}\t${obj.butterflies_killed}/${obj.butterflies}\t${obj.diamonds_collected}\t${obj.ai_perf.dropped}\t${obj.ai_perf.max_ms}\t${res}`;
   lines.push(`${s}\t${line}`);
