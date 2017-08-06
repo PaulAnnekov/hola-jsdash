@@ -610,6 +610,13 @@ class LooseThing extends Thing { // an object affected by gravity
   canKill(){ return true; }
 }
 
+/**
+ * Начальный direction - вверх
+ * Пытается всегда идти налево от текущего направления
+ * Если слева препятствие - продолжает в том же направлении
+ *
+ * Если и в том же направлении препятствие - делает поворот направо
+ */
 class Boulder extends LooseThing {
   get_char(){ return 'O'; }
   get_color(){ return '1;34'; } // bright blue on black
