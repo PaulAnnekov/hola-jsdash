@@ -1,15 +1,47 @@
 'use strict'; /*jslint node:true*/
 
+const DEAD = 0, BLOCKED = 1, FREE = 2;
 const maxStatesRegular = 10;
+/* Game gives you ~60ms instead 100ms for the first step */
 const maxStatesInit = 4;
 let maxStatesPerControl = maxStatesInit;
 let measure;
 const enableLog = false;
 
+/* DEBUG UTILITIES START */
+
 function log() {
   if (enableLog)
     console.warn.apply(console, arguments);
 }
+
+class Measure {
+  constructor() {
+    this.max = {};
+    this.measures = {};
+  }
+
+  start(label) {
+    if (!this.measures[label])
+      this.measures[label] = {total: 0};
+    this.measures[label].start = Date.now();
+  }
+
+  pause(label) {
+    this.measures[label].total += Date.now() - this.measures[label].start;
+  }
+
+  cycle() {
+    Object.keys(this.measures).forEach(l=>{
+      if (this.measures[l].total > this.max[l] || !this.max[l])
+        this.max[l] = this.measures[l].total;
+      log(`${l}: ${this.measures[l].total} ms, max ${this.max[l]}`)
+    });
+    this.measures = {};
+  }
+}
+
+/* DEBUG UTILITIES END */
 
 function dir2char(d){
   switch (d){
@@ -115,33 +147,6 @@ class List {
     return new List(this.arr.slice(0));
   }
 }
-
-class Measure {
-  constructor() {
-    this.max = {};
-    this.measures = {};
-  }
-
-  start(label) {
-    if (!this.measures[label])
-      this.measures[label] = {total: 0};
-    this.measures[label].start = Date.now();
-  }
-
-  pause(label) {
-    this.measures[label].total += Date.now() - this.measures[label].start;
-  }
-
-  cycle() {
-    Object.keys(this.measures).forEach(l=>{
-      if (this.measures[l].total > this.max[l] || !this.max[l])
-        this.max[l] = this.measures[l].total;
-      log(`${l}: ${this.measures[l].total} ms, max ${this.max[l]}`)
-    });
-    this.measures = {};
-  }
-}
-
 
 class AStar {
   constructor(gameState) {
@@ -266,79 +271,6 @@ class AStar {
     }
     measure.pause('_getPath');
     return totalPath;
-  }
-}
-
-class Game {
-  *loop(screen) {
-    measure = new Measure();
-    let max_time = 0, max_path = 0, max_states = 0;
-    screen.pop();
-    let world = from_ascii(screen, {});
-    let gameState = new GameState(world.playerPos(), world);
-    let prevWorld, move;
-    while (true){
-      log('asdasd');
-      gameState.resetCounter();
-      screen.pop();
-      world = gameState.getRootWorld();
-      log(`pos ${world.playerPos()}`);
-      if (!world.isInSync(screen))
-      {
-        log(screen);
-        log(world.render());
-        log(`started to lose frames (${max_time} ms)`);
-        prevWorld.control();
-        prevWorld.update();
-        prevWorld.control(move);
-        prevWorld.update();
-        if (!prevWorld.isInSync(screen))
-        {
-          log(`lost >1 frames, quiting`);
-          log(world.render());
-          yield 'q';
-          return;
-        }
-        gameState.setNewRoot(prevWorld);
-        world = prevWorld;
-      }
-      let ts = Date.now();
-      let aStar = new AStar(gameState);
-      let diamonds = gameState.getDiamonds();
-      let path;
-      let prevBlocked = gameState.deadPos.clone();
-      if (!diamonds.isEmpty()) {
-        measure.start('AStar');
-        path = aStar.path(world.playerPos(), diamonds, gameState.deadPos);
-        if (!path && !gameState.deadPos.isEmpty())
-          path = aStar.path(world.playerPos(), diamonds);
-        gameState.blockedDiamonds.add(aStar.blockedDiamonds);
-        gameState.deadPos.add(aStar.deadPos);
-        measure.pause('AStar');
-      }
-      if (path)
-      {
-        move = world.playerPos().dir(path[path.length-2]);
-        max_path = Math.max(max_path, path.length);
-      }
-      else
-        move = undefined;
-      log(screen);
-      log(world.render(gameState.getGraphPoints(), prevBlocked));
-      prevWorld = gameState.getRootWorld();
-      gameState.nextStep(path && path.reverse()[1]);
-      log(world.render(gameState.getGraphPoints()));
-      maxStatesPerControl = maxStatesRegular;
-      let time = Date.now() - ts;
-      measure.cycle();
-      max_time = Math.max(time, max_time);
-      max_states = Math.max(gameState.getCounter(), max_states);
-      log('time', time, 'max', max_time, gameState.getCounter(), 'max states', max_states);
-      log('move', dir2char(move), path);
-      log('blockedDiamonds', gameState.blockedDiamonds.arr);
-      log('blockedPos', gameState.deadPos.arr);
-      yield dir2char(move);
-    }
   }
 }
 
@@ -507,15 +439,85 @@ class GameState {
   }
 }
 
+class Game {
+  *loop(screen) {
+    measure = new Measure();
+    let max_time = 0, max_path = 0, max_states = 0;
+    screen.pop();
+    let world = from_ascii(screen, {});
+    let gameState = new GameState(world.playerPos(), world);
+    let prevWorld, move;
+    while (true){
+      try {
+      log(' ');
+      gameState.resetCounter();
+      screen.pop();
+      world = gameState.getRootWorld();
+      log(`pos ${world.playerPos()}`);
+      if (!world.isInSync(screen)) {
+        log(screen);
+        log(world.render());
+        log(`started to lose frames (${max_time} ms)`);
+        prevWorld.control();
+        prevWorld.update();
+        prevWorld.control(move);
+        prevWorld.update();
+        if (!prevWorld.isInSync(screen)) {
+          log(`lost >1 frames, quiting`);
+          log(world.render());
+          yield 'q';
+          return;
+        }
+        gameState.setNewRoot(prevWorld);
+        world = prevWorld;
+      }
+      let ts = Date.now();
+      let aStar = new AStar(gameState);
+      let diamonds = gameState.getDiamonds();
+      let path;
+      let prevBlocked = gameState.deadPos.clone();
+      if (!diamonds.isEmpty()) {
+        measure.start('AStar');
+        path = aStar.path(world.playerPos(), diamonds, gameState.deadPos);
+        if (!path && !gameState.deadPos.isEmpty())
+          path = aStar.path(world.playerPos(), diamonds);
+        gameState.blockedDiamonds.add(aStar.blockedDiamonds);
+        gameState.deadPos.add(aStar.deadPos);
+        measure.pause('AStar');
+      }
+      if (path) {
+        move = world.playerPos().dir(path[path.length - 2]);
+        max_path = Math.max(max_path, path.length);
+      }
+      else
+        move = undefined;
+      log(screen);
+      log(world.render(gameState.getGraphPoints(), prevBlocked));
+      prevWorld = gameState.getRootWorld();
+      gameState.nextStep(path && path.reverse()[1]);
+      log(world.render(gameState.getGraphPoints()));
+      maxStatesPerControl = maxStatesRegular;
+      let time = Date.now() - ts;
+      measure.cycle();
+      max_time = Math.max(time, max_time);
+      max_states = Math.max(gameState.getCounter(), max_states);
+      log('time', time, 'max', max_time, gameState.getCounter(), 'max states', max_states);
+      log('move', dir2char(move), path);
+      log('blockedDiamonds', gameState.blockedDiamonds.arr);
+      log('blockedPos', gameState.deadPos.arr);
+      yield dir2char(move);
+      }
+      catch(e) {
+        yield 'q';
+      }
+    }
+  }
+}
+
 let game = new Game();
 exports.play = game.loop;
 
-const DEAD = 0, BLOCKED = 1, FREE = 2;
-
-
-/* !!! c-p from game code with patches !!! */
-
-
+/* COPY-PASTE FROM GAME CODE WITH PATCHES */
 
 const UP = 0, RIGHT = 1, DOWN = 2, LEFT = 3;
 function cw(dir){ return (dir+1) % 4; }
@@ -659,13 +661,6 @@ class Explosion extends Thing {
   canKill(){ return true; }
 }
 
-/**
- * Начальный direction - вверх
- * Пытается всегда идти налево от текущего направления
- * Если слева препятствие - продолжает в том же направлении
- *
- * Если и в том же направлении препятствие - делает поворот направо
- */
 class Butterfly extends Thing {
   constructor(world){
     super(world);
