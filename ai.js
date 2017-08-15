@@ -111,6 +111,10 @@ class List {
     return this.arr.reduce.apply(this.arr, arguments);
   }
 
+  map() {
+    return new List(this.arr.map.apply(this.arr, arguments));
+  }
+
   clone() {
     return new List(this.arr.slice(0));
   }
@@ -144,10 +148,11 @@ class Measure {
 
 
 class AStar {
-  constructor(gameState) {
+  constructor(gameState, noDeadPos) {
     this.gameState = gameState;
     this.blockedDiamonds = [];
     this.deadPos = [];
+    this.noDeadPos = noDeadPos;
   }
 
   /**
@@ -196,7 +201,7 @@ class AStar {
         if (closedSet.contains(neighbor))
           continue;
         /* Game-specific logic start*/
-        if (block.contains(neighbor))
+        if (block.contains(neighbor) && !to.contains(neighbor))
           continue;
         if (rootWorld.isStatic(neighbor))
           continue;
@@ -213,7 +218,7 @@ class AStar {
         cameFrom[neighbor] = prev;
         let fullPath = path.concat(startPath.slice(1)).reverse();
         measure.start('isDeadPos');
-        if (this.gameState.getCounter() <= maxStatesPerControl)
+        if (this.gameState.getCounter() <= maxStatesPerControl && !this.noDeadPos)
         {
           let posType = this.gameState.posType(fullPath);
           if (posType != FREE) {
@@ -223,7 +228,7 @@ class AStar {
             continue;
           }
         }
-        else if (this.gameState.getWorld(fullPath).isBoulder(neighbor)) {
+        else if ((this.noDeadPos ? rootWorld : this.gameState.getWorld(fullPath)).isBoulder(neighbor)) {
           measure.pause('isDeadPos');
           continue;
         }
@@ -270,23 +275,28 @@ class AStar {
 }
 
 class Game {
+  constructor() {
+    this.gameState = null;
+    this.world = null;
+  }
+
   *loop(screen) {
     measure = new Measure();
     let max_time = 0, max_path = 0, max_states = 0;
     screen.pop();
-    let world = from_ascii(screen, {});
-    let gameState = new GameState(world.playerPos(), world);
+    this.world = from_ascii(screen, {});
+    this.gameState = new GameState(this.world.playerPos(), this.world);
     let prevWorld, move;
     while (true){
-      log('asdasd');
-      gameState.resetCounter();
+      log(' ');
+      this.gameState.resetCounter();
       screen.pop();
-      world = gameState.getRootWorld();
-      log(`pos ${world.playerPos()}`);
-      if (!world.isInSync(screen))
+      this.world = this.gameState.getRootWorld();
+      log(`pos ${this.world.playerPos()}`);
+      if (!this.world.isInSync(screen))
       {
         log(screen);
-        log(world.render());
+        log(this.world.render());
         log(`started to lose frames (${max_time} ms)`);
         prevWorld.control();
         prevWorld.update();
@@ -295,50 +305,84 @@ class Game {
         if (!prevWorld.isInSync(screen))
         {
           log(`lost >1 frames, quiting`);
-          log(world.render());
+          log(this.world.render());
           yield 'q';
           return;
         }
-        gameState.setNewRoot(prevWorld);
-        world = prevWorld;
+        this.gameState.setNewRoot(prevWorld);
+        this.world = prevWorld;
       }
       let ts = Date.now();
-      let aStar = new AStar(gameState);
-      let diamonds = gameState.getDiamonds();
+      this.aStar = new AStar(this.gameState);
+      let diamonds = this.gameState.getDiamonds();
       let path;
-      let prevBlocked = gameState.deadPos.clone();
+      let prevBlocked = this.gameState.deadPos.clone();
       if (!diamonds.isEmpty()) {
         measure.start('AStar');
-        path = aStar.path(world.playerPos(), diamonds, gameState.deadPos);
-        if (!path && !gameState.deadPos.isEmpty())
-          path = aStar.path(world.playerPos(), diamonds);
-        gameState.blockedDiamonds.add(aStar.blockedDiamonds);
-        gameState.deadPos.add(aStar.deadPos);
+        path = this.aStar.path(this.world.playerPos(), diamonds, this.gameState.deadPos);
+        if (!path && !this.gameState.deadPos.isEmpty())
+          path = this.aStar.path(this.world.playerPos(), diamonds);
+        this.gameState.blockedDiamonds.add(this.aStar.blockedDiamonds);
+        this.gameState.deadPos.add(this.aStar.deadPos);
+        if (!path)
+          this.gameState.blockedDiamonds.add(diamonds.arr);
         measure.pause('AStar');
+      } else {
+        measure.start('killButterflies');
+        path = this.killButterflies();
+        measure.pause('killButterflies');
       }
       if (path)
       {
-        move = world.playerPos().dir(path[path.length-2]);
+        move = this.world.playerPos().dir(path[path.length-2]);
         max_path = Math.max(max_path, path.length);
       }
       else
         move = undefined;
       log(screen);
-      log(world.render(gameState.getGraphPoints(), prevBlocked));
-      prevWorld = gameState.getRootWorld();
-      gameState.nextStep(path && path.reverse()[1]);
-      log(world.render(gameState.getGraphPoints()));
+      log(this.world.render(this.gameState.getGraphPoints(), prevBlocked));
+      prevWorld = this.gameState.getRootWorld();
+      this.gameState.nextStep(path && path.reverse()[1]);
+      log(this.world.render(this.gameState.getGraphPoints()));
       maxStatesPerControl = maxStatesRegular;
       let time = Date.now() - ts;
       measure.cycle();
       max_time = Math.max(time, max_time);
-      max_states = Math.max(gameState.getCounter(), max_states);
-      log('time', time, 'max', max_time, gameState.getCounter(), 'max states', max_states);
+      max_states = Math.max(this.gameState.getCounter(), max_states);
+      log('time', time, 'max', max_time, this.gameState.getCounter(), 'max states', max_states);
       log('move', dir2char(move), path);
-      log('blockedDiamonds', gameState.blockedDiamonds.arr);
-      log('blockedPos', gameState.deadPos.arr);
+      log('blockedDiamonds', this.gameState.blockedDiamonds.arr);
+      log('blockedPos', this.gameState.deadPos.arr);
       yield dir2char(move);
     }
+  }
+
+  killButterflies() {
+    let butterflies = this.gameState.getButterflies();
+    let me = this.world.playerPos();
+    let target = butterflies.reduce((a, b) => a.distanceTo(me) < b.distanceTo(me) ? a : b);
+    let pathInfo = this.world.get(target).getPath();
+    let butterflyPath = new List(pathInfo.path);
+    let butterflyBorder = new List(pathInfo.border);
+    let isBlocked = p => p instanceof Boulder || p instanceof SteelWall || p instanceof BrickWall;
+    let boulders = this.gameState.getBoulders(b => {
+      let below = b.step(DOWN), belowBelow = below.step(DOWN);
+      return this.world.isOutOfMap(below.x, below.y) || isBlocked(this.world.get(below)) || butterflyBorder.contains(below) ||
+        this.world.isOutOfMap(belowBelow.x, belowBelow.y) || isBlocked(this.world.get(belowBelow)) ||
+        butterflyBorder.contains(belowBelow);
+    });
+    if (!this.killer)
+    {
+      this.killer = boulders.map(b => b.step(DOWN).step(DOWN))
+        .reduce((a, b) => target.distanceTo(a) + (target.y < a.y ? 5 : 0) < target.distanceTo(b) + (target.y < b.y ? 5 : 0) ? a : b);
+    }
+    log('target', target);
+    log('boulders', boulders);
+    log('under butterfly killer', this.killer);
+    butterflyBorder.remove(this.killer);
+    let aStar = new AStar(this.gameState, true);
+    let nearestPath = aStar.path(this.killer, butterflyBorder, butterflyBorder);
+    return this.aStar.path(me, new List([nearestPath[nearestPath.length-1]]), butterflyBorder);
   }
 }
 
@@ -412,6 +456,16 @@ class GameState {
   getDiamonds() {
     let root = this._getRoot();
     return root.world.getDiamonds(this.blockedDiamonds);
+  }
+
+  getButterflies() {
+    let root = this._getRoot();
+    return root.world.getButterflies();
+  }
+
+  getBoulders(check) {
+    let root = this._getRoot();
+    return root.world.getBoulders(check);
   }
 
   setNewRoot(world) {
@@ -508,7 +562,7 @@ class GameState {
 }
 
 let game = new Game();
-exports.play = game.loop;
+exports.play = game.loop.bind(game);
 
 const DEAD = 0, BLOCKED = 1, FREE = 2;
 
@@ -730,6 +784,44 @@ class Butterfly extends Thing {
   }
   canKill(){ return true; }
   isMovable(){ return true; }
+  getPath() {
+    let path = [], border = [], dir = this.dir, point = this.point;
+    while (path.length < 3 || path.length < 20) {
+      let points = new Array(4);
+      for (let i = 0; i<4; i++)
+        points[i] = point.step(i);
+      let neighbors = points.map(p=>{
+        let thing = this.world.get(p);
+        return thing && thing != this ? thing : null;
+      });
+      let locked = true;
+      for (let neighbor of neighbors)
+      {
+        if (!neighbor)
+          locked = false;
+      }
+      if (locked)
+        return {path: path, border: border};
+      let left = ccw(dir);
+      if (!neighbors[left])
+      {
+        path.push(points[left]);
+        point = points[left];
+        dir = left;
+      }
+      else if (!neighbors[dir]) {
+        path.push(points[dir]);
+        border.push(points[left]);
+        point = points[dir];
+      }
+      else {
+        border.push(points[left]);
+        border.push(points[dir]);
+        dir = cw(dir);
+      }
+    }
+    return {path: path, border: border};
+  }
 }
 
 class Player extends Thing {
@@ -815,17 +907,31 @@ class World {
   canKill(point) {
     return this.get(point) && this.get(point).canKill();
   }
-  getDiamonds(exclude) {
-    let diamonds = new List();
+  getThings(instance, exclude) {
+    let things = new List();
     for (let y = 0; y<this.height; y++)
     {
       let row = this.cells[y];
       for (let x = 0; x<this.width; x++) {
-        if (row[x] instanceof Diamond && !exclude.contains(new Point(x, y))/* && !row[x].falling*/)
-          diamonds.add(new Point(x, y));
+        if (!(row[x] instanceof instance))
+          continue;
+        if (typeof exclude==='function' && exclude(row[x].point))
+          continue;
+        if (typeof exclude==='object' && exclude.contains(new Point(x, y))/* && !row[x].falling*/)
+          continue;
+        things.add(new Point(x, y));
       }
     }
-    return diamonds;
+    return things;
+  }
+  getDiamonds(exclude) {
+    return this.getThings(Diamond, exclude);
+  }
+  getButterflies() {
+    return this.getThings(Butterfly);
+  }
+  getBoulders(check) {
+    return this.getThings(Boulder, check);
   }
   diamond_collected(){
     this.score++;
