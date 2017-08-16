@@ -175,7 +175,7 @@ class AStar {
     measure.start('while');
     while (!openSet.isEmpty()) {
       measure.start('openSet.reduce');
-      current = openSet.reduce((first, second) => fScore[first] </*=*/ fScore[second] ? first : second);
+      current = openSet.reduce((first, second) => fScore[first] < fScore[second] ? first : second);
       measure.pause('openSet.reduce');
       measure.start('to.contains(current)');
       if (to.contains(current))
@@ -346,6 +346,11 @@ class GameState {
     return root.world.getDiamonds(this.blockedDiamonds);
   }
 
+  getDirt() {
+    let root = this._getRoot();
+    return root.world.getDirt();
+  }
+
   setNewRoot(world) {
     this.statesGraph = {};
     this.statesGraph[world.playerPos()] = {world: world};
@@ -460,11 +465,14 @@ class Game {
         log(`started to lose frames (${max_time} ms)`);
         prevWorld.control();
         prevWorld.update();
-        prevWorld.control(move);
-        prevWorld.update();
+        if (move)
+        {
+          prevWorld.control(move);
+          prevWorld.update();
+        }
         if (!prevWorld.isInSync(screen)) {
           log(`lost >1 frames, quiting`);
-          log(world.render());
+          log(prevWorld.render());
           yield 'q';
           return;
         }
@@ -481,9 +489,13 @@ class Game {
         path = aStar.path(world.playerPos(), diamonds, gameState.deadPos);
         if (!path && !gameState.deadPos.isEmpty())
           path = aStar.path(world.playerPos(), diamonds);
+        if (!path)
+          gameState.blockedDiamonds.add(diamonds.arr);
         gameState.blockedDiamonds.add(aStar.blockedDiamonds);
         gameState.deadPos.add(aStar.deadPos);
         measure.pause('AStar');
+      } else {
+        path = aStar.path(world.playerPos(), gameState.getDirt());
       }
       if (path) {
         move = world.playerPos().dir(path[path.length - 2]);
@@ -508,6 +520,7 @@ class Game {
       yield dir2char(move);
       }
       catch(e) {
+        log('main exception', e);
         yield 'q';
       }
     }
@@ -810,17 +823,23 @@ class World {
   canKill(point) {
     return this.get(point) && this.get(point).canKill();
   }
-  getDiamonds(exclude) {
-    let diamonds = new List();
+  getThings(instance, exclude) {
+    let things = new List();
     for (let y = 0; y<this.height; y++)
     {
       let row = this.cells[y];
       for (let x = 0; x<this.width; x++) {
-        if (row[x] instanceof Diamond && !exclude.contains(new Point(x, y))/* && !row[x].falling*/)
-          diamonds.add(new Point(x, y));
+        if (row[x] instanceof instance && !exclude.contains(new Point(x, y))/* && !row[x].falling*/)
+          things.add(new Point(x, y));
       }
     }
-    return diamonds;
+    return things;
+  }
+  getDiamonds(exclude) {
+    return this.getThings(Diamond, exclude);
+  }
+  getDirt() {
+    return this.getThings(Dirt, new List());
   }
   diamond_collected(){
     this.score++;
