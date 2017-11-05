@@ -23,6 +23,10 @@ v8.1.3
 Results
 =======
 
+- Q - quited
+- K - killed
+- E - error
+
 Final
 -----
 
